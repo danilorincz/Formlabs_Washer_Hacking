@@ -1,23 +1,31 @@
+#include <LiquidCrystal_I2C.h>
+
 #include "C:\customLibraries\cronos\cronos.h"
 #include "C:\customLibraries\timer\timer.h"
 #include "C:\customLibraries\cronos\stepperControl.h"
 
+#define S1_DIR_PIN 15
+#define S1_STEP_PIN 16
+#define S1_EN_PIN 17
 
-#define DIR_PIN 5
-#define STEP_PIN 18
-#define EN_PIN 19
+#define S2_DIR_PIN 5
+#define S2_STEP_PIN 18
+#define S2_EN_PIN 19
+
 #define OUT_A 33
 #define OUT_B 32
 #define SW 23
+#define LIMIT_PIN 39
 
-#include <LiquidCrystal_I2C.h>
+//* LCD
 int lcdColumns = 16;
 int lcdRows = 2;
-
 LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);
+
 void setup()
 {
   Serial.begin(115200);
+
   pinMode(DIR_PIN, OUTPUT);
   pinMode(STEP_PIN, OUTPUT);
   pinMode(EN_PIN, OUTPUT);
@@ -32,10 +40,36 @@ void setup()
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
-  // print message
-
   lcd.clear();
 }
+
+void loop()
+{
+}
+
+/*
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+
+  pinMode(OUT_A, INPUT);
+  pinMode(OUT_B, INPUT);
+  pinMode(SW, INPUT);
+
+  turnOn();
+  setDir(HIGH);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.clear();
+}
+
+
 
 void makeStep(int delayMicros)
 {
@@ -78,3 +112,5 @@ void loop()
   lcd.clear();
   setDir(HIGH);
 }
+
+*/

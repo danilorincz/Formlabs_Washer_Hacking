@@ -80,7 +80,8 @@ void setup()
   lcd.backlight();
   lcd.setCursor(0, 0);
   lcd.clear();
-
+  pinMode(LIMIT_PIN, INPUT);
+  
   washingStepper.begin();
   liftingStepper.begin();
   //? NEWTWROK
@@ -108,7 +109,7 @@ void setup()
 
   washingStepper.off();
   liftingStepper.off();
-  liftingStepper.setSpeed(30);
+  liftingStepper.setSpeed(100);
 }
 
 int getEncoderValue()
@@ -195,15 +196,33 @@ void loop()
   }
   if (getButton())
   {
-    encoder.write(0);
 
+    homeLift();
+    /*
     liftingStepper.changeDirection();
     liftingStepper.on();
-    liftingStepper.runSteps(3000, returnFalse);
-    liftingStepper.off();
+    liftingStepper.runSteps(newPosition * 100, returnFalse);
+    liftingStepper.off();*/
+    encoder.write(0);
   }
+  lcd.setCursor(10, 1);
+  lcd.print(readLimitSwitch());
 }
 bool returnFalse()
 {
   return false;
+}
+
+bool readLimitSwitch()
+{
+  return digitalRead(LIMIT_PIN);
+}
+
+void homeLift()
+{
+  liftingStepper.on();
+  liftingStepper.setSpeed(20);
+  liftingStepper.setLeft();
+  liftingStepper.runSteps(10000, readLimitSwitch);
+  liftingStepper.off();
 }

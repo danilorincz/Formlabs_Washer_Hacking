@@ -1,8 +1,17 @@
+#define homeWifi
 #include <LiquidCrystal_I2C.h>
 
+#include <WiFi.h>
+#include <WiFiUDP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+#define ENCODER_DO_NOT_USE_INTERRUPTS
+#include <Encoder.h>
 #include "C:\customLibraries\cronos\cronos.h"
 #include "C:\customLibraries\timer\timer.h"
-#include "C:\customLibraries\cronos\stepperControl.h"
+#include "C:\customLibraries\stepperControl\stepperControl_blocking.h"
 
 #define S1_DIR_PIN 15
 #define S1_STEP_PIN 16
@@ -22,95 +31,179 @@ int lcdColumns = 16;
 int lcdRows = 2;
 LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);
 
+//* ENCODER
+Encoder encoder(OUT_A, OUT_B);
+long oldPosition = -999;
+
+//* STEPPER
+Stepper liftingStepper(S1_STEP_PIN, S1_DIR_PIN, S1_EN_PIN);
+Stepper washingStepper(S2_STEP_PIN, S2_DIR_PIN, S2_EN_PIN);
+
+//* WIFI
+const int udpPort = 4210;
+#ifdef work
+const char *ssid = "dentartwork";
+const char *password = "tutititkos444";
+IPAddress staticIP(192, 168, 5, 4);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress broadcast(192, 168, 5, 255);
+IPAddress gateway(192, 168, 5, 1);
+#endif
+#ifdef homeWifi
+const char *ssid = "Lorincz";
+const char *password = "ccLorincz2020cc";
+IPAddress staticIP(192, 168, 22, 4);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress broadcast(192, 168, 22, 255);
+IPAddress gateway(192, 168, 22, 1);
+#endif
+WiFiUDP udp;
+AsyncWebServer server(80);
+
+//? NTP TIME
+const char *NTP_SERVER = "ch.pool.ntp.org";
+const char *TZ_INFO = "CET-1CEST-2,M3.5.0/02:00:00,M10.5.0/03:00:00";
+tm timeinfo;
+time_t now;
+long unsigned lastNTPtime;
+unsigned long lastEntryTime;
+TimeStruct nowTime;
+
+//#include "webpage.h"
+#include "webInterface.h"
+
 void setup()
 {
   Serial.begin(115200);
-
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(EN_PIN, OUTPUT);
-
-  pinMode(OUT_A, INPUT);
-  pinMode(OUT_B, INPUT);
-  pinMode(SW, INPUT);
-
-  turnOn();
-  setDir(HIGH);
 
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
   lcd.clear();
+
+  washingStepper.begin();
+  liftingStepper.begin();
+  //? NEWTWROK
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(200);
+  }
+
+  //? NTP TIME
+  configTime(0, 0, NTP_SERVER);
+  setenv("TZ", TZ_INFO, 1);
+  getNTPtime(10);
+  lastNTPtime = time(&now);
+  lastEntryTime = millis();
+
+  //? SERVER
+  WiFi.config(staticIP, staticIP, subnet);
+  serverOn();
+  Serial.println("Connected with this IP: " + String(staticIP));
+  AsyncElegantOTA.begin(&server);
+  server.begin();
+  udp.begin(udpPort);
+
+  washingStepper.off();
+  liftingStepper.off();
+  liftingStepper.setSpeed(30);
+}
+
+int getEncoderValue()
+{
+  return encoder.read() / 4;
+}
+bool getButton()
+{
+  if (digitalRead(SW))
+    return false;
+  else
+    return true;
+}
+
+long getWashTime(int position)
+{
+  int washTime = 0;
+  if (position < 0)
+    return washTime;
+
+  static const int initialValue = 0;
+  static const int LIMIT_RATE_1 = 30;
+  static const int LIMIT_RATE_5 = 5 * 60;
+  static const int LIMIT_RATE_30 = 20 * 60;
+  static const int LIMIT_RATE_60 = 60 * 60;
+
+  washTime = initialValue;
+  for (long i = 0; i < position; ++i)
+  {
+    if (washTime < LIMIT_RATE_1)
+      washTime += 1;
+    else if (washTime < LIMIT_RATE_5)
+      washTime += 5;
+    else if (washTime < LIMIT_RATE_30)
+      washTime += 30;
+    else if (washTime < LIMIT_RATE_60)
+      washTime += 60;
+    else
+      washTime += 300;
+  }
+
+  return washTime;
+}
+bool getNTPtime(int sec)
+{
+  uint32_t start = millis();
+  do
+  {
+    time(&now);
+    localtime_r(&now, &timeinfo);
+
+    delay(10);
+  } while (((millis() - start) <= (1000 * sec)) && (timeinfo.tm_year < (2016 - 1900)));
+
+  if (timeinfo.tm_year <= (2016 - 1900))
+    return false;
+
+  char time_output[30];
+  strftime(time_output, 30, "%a  %d-%m-%y %T", localtime(&now));
+
+  return true;
 }
 
 void loop()
 {
-}
-
-/*
-void setup()
-{
-  Serial.begin(115200);
-
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(EN_PIN, OUTPUT);
-
-  pinMode(OUT_A, INPUT);
-  pinMode(OUT_B, INPUT);
-  pinMode(SW, INPUT);
-
-  turnOn();
-  setDir(HIGH);
-
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.clear();
-}
-
-
-
-void makeStep(int delayMicros)
-{
-  digitalWrite(STEP_PIN, HIGH);
-  delayMicroseconds(delayMicros);
-  digitalWrite(STEP_PIN, LOW);
-  delayMicroseconds(delayMicros);
-}
-void turnOn()
-{
-  digitalWrite(EN_PIN, LOW);
-}
-void setDir(bool newDir)
-{
-  digitalWrite(DIR_PIN, newDir);
-}
-void loop()
-{
-  Serial.println(digitalRead(SW));
-  Serial.println(digitalRead(OUT_A));
-  Serial.println(digitalRead(OUT_B));
-  Serial.println(" ");
-  
-  lcd.setCursor(0, 0);
-  lcd.print("jobbra forog");
-  for (int i = 0; i < 1000; i++)
+  AsyncElegantOTA.loop();
+  int newPosition = getEncoderValue();
+  static Timer displayLCD(200);
+  if (displayLCD.timeElapsed())
   {
-    makeStep(1000);
-  }
-  delay(1000);
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("ballra forog");
-  setDir(LOW);
-  for (int i = 0; i < 1000; i++)
-  {
-    makeStep(1000);
-  }
-  delay(1000);
-  lcd.clear();
-  setDir(HIGH);
-}
+    if (newPosition != oldPosition)
+    {
+      oldPosition = newPosition;
 
-*/
+      long newWashTime = getWashTime(newPosition);
+      String newWashTimeString = cronos::millis_to_string(newWashTime * 1000);
+
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(newWashTimeString);
+      lcd.setCursor(0, 1);
+      lcd.print(newPosition);
+    }
+  }
+  if (getButton())
+  {
+    encoder.write(0);
+
+    liftingStepper.changeDirection();
+    liftingStepper.on();
+    liftingStepper.runSteps(3000, returnFalse);
+    liftingStepper.off();
+  }
+}
+bool returnFalse()
+{
+  return false;
+}

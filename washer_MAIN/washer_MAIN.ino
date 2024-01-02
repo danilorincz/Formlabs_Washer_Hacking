@@ -1,4 +1,5 @@
 #define homeWifi
+//#define workWifi
 #include <LiquidCrystal_I2C.h>
 
 #include <WiFi.h>
@@ -7,7 +8,7 @@
 #include <AsyncElegantOTA.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
-#define ENCODER_DO_NOT_USE_INTERRUPTS
+//#define ENCODER_DO_NOT_USE_INTERRUPTS
 #include <Encoder.h>
 #include "C:\customLibraries\cronos\cronos.h"
 #include "C:\customLibraries\timer\timer.h"
@@ -27,21 +28,38 @@
 #define LIMIT_PIN 39
 
 //* LCD
+unsigned long refreshTime = 120;
 int lcdColumns = 16;
 int lcdRows = 2;
 LiquidCrystal_I2C lcd(0x27, lcdColumns, lcdRows);
+enum MenuState
+{
+  EMPTY,
+  MAIN_MENU,
+  START_WASHING,
+  MANUAL_CONTROL,
+  SET_TIME,
+  WASH,
+  MOVE_UP,
+  MOVE_DOWN
+};
+
+MenuState currentMenu = MAIN_MENU;
+MenuState prevMenu = EMPTY;
+int encoderPosition = 0;
+long washTime = 10; // Default washing time
 
 //* ENCODER
 Encoder encoder(OUT_A, OUT_B);
 long oldPosition = -999;
-
+int prevMenuSelection = -1;
 //* STEPPER
 Stepper liftingStepper(S1_STEP_PIN, S1_DIR_PIN, S1_EN_PIN);
 Stepper washingStepper(S2_STEP_PIN, S2_DIR_PIN, S2_EN_PIN);
-
+bool liftHomeDone = false;
 //* WIFI
 const int udpPort = 4210;
-#ifdef work
+#ifdef workWifi
 const char *ssid = "dentartwork";
 const char *password = "tutititkos444";
 IPAddress staticIP(192, 168, 5, 4);
@@ -73,6 +91,7 @@ TimeStruct nowTime;
 #include "webInterface.h"
 
 void setup()
+
 {
   Serial.begin(115200);
 
@@ -81,7 +100,7 @@ void setup()
   lcd.setCursor(0, 0);
   lcd.clear();
   pinMode(LIMIT_PIN, INPUT);
-  
+
   washingStepper.begin();
   liftingStepper.begin();
   //? NEWTWROK
@@ -108,20 +127,32 @@ void setup()
   udp.begin(udpPort);
 
   washingStepper.off();
+  washingStepper.setSpeed(70);
   liftingStepper.off();
   liftingStepper.setSpeed(100);
+
 }
 
 int getEncoderValue()
 {
-  return encoder.read() / 4;
+  return -encoder.read() / 4;
 }
+
 bool getButton()
 {
-  if (digitalRead(SW))
-    return false;
-  else
+  static bool pressed = false;
+
+  if (!digitalRead(SW) && !pressed)
+  {
+    pressed = true;
+    delay(200);
     return true;
+  }
+  else
+  {
+    pressed = false;
+    return false;
+  }
 }
 
 long getWashTime(int position)
@@ -172,42 +203,6 @@ bool getNTPtime(int sec)
 
   return true;
 }
-
-void loop()
-{
-  AsyncElegantOTA.loop();
-  int newPosition = getEncoderValue();
-  static Timer displayLCD(200);
-  if (displayLCD.timeElapsed())
-  {
-    if (newPosition != oldPosition)
-    {
-      oldPosition = newPosition;
-
-      long newWashTime = getWashTime(newPosition);
-      String newWashTimeString = cronos::millis_to_string(newWashTime * 1000);
-
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(newWashTimeString);
-      lcd.setCursor(0, 1);
-      lcd.print(newPosition);
-    }
-  }
-  if (getButton())
-  {
-
-    homeLift();
-    /*
-    liftingStepper.changeDirection();
-    liftingStepper.on();
-    liftingStepper.runSteps(newPosition * 100, returnFalse);
-    liftingStepper.off();*/
-    encoder.write(0);
-  }
-  lcd.setCursor(10, 1);
-  lcd.print(readLimitSwitch());
-}
 bool returnFalse()
 {
   return false;
@@ -221,8 +216,232 @@ bool readLimitSwitch()
 void homeLift()
 {
   liftingStepper.on();
-  liftingStepper.setSpeed(20);
+  liftingStepper.setSpeed(90);
   liftingStepper.setLeft();
-  liftingStepper.runSteps(10000, readLimitSwitch);
+  liftingStepper.runSteps(100000, readLimitSwitch);
   liftingStepper.off();
+  liftHomeDone = true;
+}
+
+void displayMainMenu()
+{
+  int menuSelection = abs(encoderPosition) % 2;
+
+  if (prevMenuSelection != menuSelection)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(menuSelection == 0 ? ">WASHING" : " WASHING");
+    lcd.setCursor(0, 1);
+    lcd.print(menuSelection == 1 ? ">CONTROL" : " CONTROL");
+    prevMenuSelection = menuSelection;
+  }
+}
+void handleMainMenuSelection()
+{
+  int menuSelection = abs(encoderPosition) % 2;
+  if (menuSelection == 0)
+  {
+    currentMenu = START_WASHING;
+    Serial.println("WASHING MENU");
+    resetMenuSelection();
+  }
+  else if (menuSelection == 1)
+  {
+    Serial.println("CONTROL MENU");
+    currentMenu = MANUAL_CONTROL;
+    resetMenuSelection();
+  }
+  encoder.write(0);
+  encoderPosition = 0;
+}
+
+void displayWashingMenu()
+{
+  int menuSelection = abs(encoderPosition) % 3;
+
+  if (prevMenuSelection != menuSelection)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(menuSelection == 0 ? ">START" : " START");
+    lcd.print(menuSelection == 1 ? ">SET" : " SET");
+    lcd.print(menuSelection == 2 ? ">Back" : " Back");
+    lcd.setCursor(0, 1);
+    String washTimeString = cronos::millis_to_string(washTime * 1000);
+    lcd.print(washTimeString);
+    prevMenuSelection = menuSelection;
+  }
+}
+
+void handleWashingMenuSelection()
+{
+  int menuSelection = abs(encoderPosition) % 3;
+  if (menuSelection == 0)
+  {
+    Serial.println("START");
+    startWashing();
+  }
+  else if (menuSelection == 1)
+  {
+    Serial.println("SET TIME");
+    setTimeMenu();
+  }
+  else if (menuSelection == 2)
+  {
+    Serial.println("BACK");
+    backToMain();
+  }
+  encoder.write(0);
+  encoderPosition = 0;
+}
+
+void displayManualControlMenu()
+{
+  int menuSelection = abs(encoderPosition) % 3;
+
+  if (prevMenuSelection != menuSelection)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(menuSelection == 0 ? ">UP" : " UP");
+    lcd.setCursor(0, 1);
+    lcd.print(menuSelection == 1 ? ">DOWN" : " DOWN");
+    lcd.print(menuSelection == 2 ? ">Back" : " Back");
+    prevMenuSelection = menuSelection;
+  }
+}
+void liftUp()
+{
+  if (liftHomeDone || readLimitSwitch())
+  {
+    liftingStepper.on();
+    liftingStepper.setSpeed(90);
+    liftingStepper.setRight();
+    liftingStepper.runSteps(25000, getButton);
+    liftingStepper.off();
+  }
+}
+void handleManualControlSelection()
+{
+  int menuSelection = abs(encoderPosition) % 3;
+  if (menuSelection == 0)
+  {
+    liftUp();
+    Serial.println("MOVE UP");
+  }
+  else if (menuSelection == 1)
+  {
+    Serial.println("MOVE DOWN");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("HOMING");
+    homeLift();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("HOMING DONE");
+    delay(1000);
+  }
+  else if (menuSelection == 2)
+  {
+    Serial.println("BACK");
+    backToMain();
+  }
+  encoder.write(0);
+  encoderPosition = 0;
+}
+
+void backToMain()
+{
+  currentMenu = MAIN_MENU;
+  resetMenuSelection();
+}
+void resetMenuSelection()
+{
+  prevMenuSelection = -1;
+}
+void setTimeMenu()
+{
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  String washTimeString = cronos::millis_to_string(washTime * 1000);
+  lcd.print(washTimeString);
+
+  while (!getButton())
+  {
+    encoderPosition = getEncoderValue();
+    static int prevEncoderPosition = encoderPosition;
+    if (encoderPosition != prevEncoderPosition)
+    {
+      prevEncoderPosition = encoderPosition;
+      washTime = getWashTime(encoderPosition);
+      String washTimeString = cronos::millis_to_string(washTime * 1000);
+      lcd.setCursor(0, 0);
+      lcd.print(washTimeString);
+    }
+  }
+}
+unsigned long millisWhenStartWash = 0;
+void startWashing()
+{
+  washingStepper.on();
+  if (!readLimitSwitch())
+  {
+    homeLift();
+  }
+  //liftUp();
+  millisWhenStartWash = millis();
+  unsigned long timeLeft = millisWhenStartWash - washTime * 1000;
+  while (timeLeft > 0)
+  {
+    timeLeft = millisWhenStartWash - washTime * 1000;
+    washingStepper.changeDirection();
+    washingStepper.runSteps(30000, emergencyStopWash);
+    delay(300);
+    static Timer displayTimeLeft(1000);
+    if (displayTimeLeft.timeElapsed())
+    {
+      lcd.clear();
+      String timeLeftString = cronos::millis_to_string(timeLeft * 1000);
+      lcd.print(timeLeftString);
+    }
+  }
+  washingStepper.off();
+}
+bool emergencyStopWash()
+{
+  if (millisWhenStartWash - washTime * 1000 > 0)
+    return false;
+  else
+    return true;
+}
+void loop()
+{
+  encoderPosition = getEncoderValue();
+  bool buttonPressed = getButton();
+
+  if (currentMenu != prevMenu)
+  {
+    resetMenuSelection();
+    prevMenu = currentMenu;
+  }
+  switch (currentMenu)
+  {
+  case MAIN_MENU:
+    displayMainMenu();
+    if (buttonPressed)
+      handleMainMenuSelection();
+    break;
+  case START_WASHING:
+    displayWashingMenu();
+    if (buttonPressed)
+      handleWashingMenuSelection();
+    break;
+  case MANUAL_CONTROL:
+    displayManualControlMenu();
+    if (buttonPressed)
+      handleManualControlSelection();
+    break;
+    // Add other cases as needed
+  }
 }
